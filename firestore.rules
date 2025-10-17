@@ -1,0 +1,37 @@
+rules_version = '2'
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Restrict admin access to the configured admin email.
+    // Tip: For production, using a custom claim (request.auth.token.admin) is recommended.
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == 'megancetech@gmail.com';
+    }
+
+    // Admin-only collections used by this backend app
+    match /newsletter_subscribers/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /products/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /categories/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /orders/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /coupons/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Default deny for everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
