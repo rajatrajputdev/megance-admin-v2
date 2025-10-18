@@ -22,8 +22,9 @@ const Orders = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [productFilter, setProductFilter] = useState('');
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('date-desc');
+  const [idInvoiceQuery, setIdInvoiceQuery] = useState('');
+  const [dateFilter, setDateFilter] = useState(''); // YYYY-MM-DD
+  const [monthFilter, setMonthFilter] = useState(''); // YYYY-MM
 
   useEffect(() => {
     setLoading(true);
@@ -42,7 +43,7 @@ const Orders = () => {
     try {
       // Prefer region from env if provided; otherwise, try a few common regions
       const envRegion = (import.meta.env.VITE_FUNCTIONS_REGION || '').trim();
-      const regions = envRegion ? [envRegion] : [undefined, 'us-central1', 'asia-south1', 'europe-west1'];
+      const regions = envRegion ? [envRegion] : [undefined, 'asia-south2', 'us-central1', 'asia-south1', 'europe-west1'];
       let response = null;
       let lastErr = null;
       for (const r of regions) {
@@ -83,6 +84,7 @@ const Orders = () => {
       }
     }
   };
+
 
   function buildInvoiceHtml(order) {
     const idShort = String(order?.id || '').slice(-8);
@@ -183,6 +185,45 @@ const Orders = () => {
     });
   }
 
+  // Helpers to group items by product and sub-categorize by size
+  function getItemSize(it) {
+    const candidates = [
+      it?.size,
+      it?.Size,
+      it?.selectedSize,
+      it?.sizeLabel,
+      it?.variant?.size,
+      it?.option?.size,
+      it?.options?.size,
+      it?.attributes?.size,
+      it?.shoeSize,
+    ];
+    const s = candidates.find((x) => typeof x === 'string' && x.trim());
+    if (s) return String(s).trim();
+    // Sometimes size may be numeric
+    const n = candidates.find((x) => typeof x === 'number' && Number.isFinite(x));
+    return n != null ? String(n) : null;
+  }
+
+  function summarizeItems(items) {
+    const map = new Map(); // name -> { name, sizes: Map(size->qty), totalQty, totalAmount }
+    for (const raw of (items || [])) {
+      const name = String(raw?.name || 'Unknown').trim();
+      const size = getItemSize(raw); // null if absent
+      const qty = Number(raw?.qty || 0) || 0;
+      const price = Number(raw?.price || 0) || 0;
+      if (!map.has(name)) {
+        map.set(name, { name, sizes: new Map(), totalQty: 0, totalAmount: 0 });
+      }
+      const entry = map.get(name);
+      entry.totalQty += qty;
+      entry.totalAmount += price * qty;
+      const key = size || '(default)';
+      entry.sizes.set(key, (entry.sizes.get(key) || 0) + qty);
+    }
+    return Array.from(map.values());
+  }
+
   // Unique product names from order items (for filtering)
   const productOptions = useMemo(() => {
     const set = new Set();
@@ -197,37 +238,60 @@ const Orders = () => {
 
   // Filtered + Sorted orders
   const filteredSorted = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    let list = orders.filter((o) => {
-      const names = (o.items || []).map((it) => String(it?.name || ''));
-      const hasProduct = productFilter ? names.some((n) => n === productFilter) : true;
-      const matchesTerm = term ? names.some((n) => n.toLowerCase().includes(term)) : true;
-      return hasProduct && matchesTerm;
-    });
-    const getAmount = (o) => Number(o?.payable ?? o?.amount ?? 0) || 0;
-    switch (sort) {
-      case 'date-asc':
-        list.sort((a,b)=>((a.createdAt?.toMillis?.()||0)-(b.createdAt?.toMillis?.()||0)));
-        break;
-      case 'amount-desc':
-        list.sort((a,b)=>getAmount(b)-getAmount(a));
-        break;
-      case 'amount-asc':
-        list.sort((a,b)=>getAmount(a)-getAmount(b));
-        break;
-      case 'customer-az':
-        list.sort((a,b)=>String(a?.billing?.name||'').localeCompare(String(b?.billing?.name||'')));
-        break;
-      case 'customer-za':
-        list.sort((a,b)=>String(b?.billing?.name||'').localeCompare(String(a?.billing?.name||'')));
-        break;
-      case 'date-desc':
-      default:
-        list.sort((a,b)=>((b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0)));
-        break;
+    const q = idInvoiceQuery.trim().toLowerCase();
+    const hasQ = q.length > 0;
+    // Date bounds
+    let dayStart = null, dayEnd = null;
+    if (dateFilter) {
+      const d = new Date(dateFilter + 'T00:00:00');
+      if (!isNaN(d)) {
+        dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+        dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+      }
     }
+    let monthStart = null, monthEnd = null;
+    if (monthFilter) {
+      const [y, m] = monthFilter.split('-').map((x) => parseInt(x, 10));
+      if (Number.isInteger(y) && Number.isInteger(m)) {
+        monthStart = new Date(y, m - 1, 1, 0, 0, 0, 0);
+        monthEnd = new Date(y, m, 0, 23, 59, 59, 999);
+      }
+    }
+
+    const list = orders.filter((o) => {
+      // Product filter
+      if (productFilter) {
+        const names = (o.items || []).map((it) => String(it?.name || ''));
+        if (!names.some((n) => n === productFilter)) return false;
+      }
+      // ID / Invoice filter
+      if (hasQ) {
+        const id = String(o.id || '').toLowerCase();
+        const idShort = String(o.id || '').slice(-8).toLowerCase();
+        const invCandidates = [o.invoiceNumber, o.invoiceNo, o.invoice_id, o.invoiceId, o.invoice]
+          .map((x) => (x == null ? '' : String(x))).map((s) => s.toLowerCase());
+        const matchId = id.includes(q) || idShort.includes(q);
+        const matchInv = invCandidates.some((s) => s && s.includes(q));
+        if (!matchId && !matchInv) return false;
+      }
+      // Date filter (specific day)
+      if (dayStart || dayEnd) {
+        const d = tsToDate(o.createdAt);
+        if (!d) return false;
+        if (dayStart && d < dayStart) return false;
+        if (dayEnd && d > dayEnd) return false;
+      }
+      // Month filter (YYYY-MM)
+      if (monthStart || monthEnd) {
+        const d = tsToDate(o.createdAt);
+        if (!d) return false;
+        if (monthStart && d < monthStart) return false;
+        if (monthEnd && d > monthEnd) return false;
+      }
+      return true;
+    });
     return list;
-  }, [orders, productFilter, search, sort]);
+  }, [orders, productFilter, idInvoiceQuery, dateFilter, monthFilter]);
 
   // Total collected across filtered orders: sum payable when paymentId exists (best proxy for paid)
   const totalCollected = useMemo(() => {
@@ -249,28 +313,44 @@ const Orders = () => {
             </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            className="input"
-            placeholder="Search product in orders…"
-            value={search}
-            onChange={(e)=>setSearch(e.target.value)}
-            style={{ width: 220 }}
-          />
-          <select className="select" value={productFilter} onChange={(e)=>setProductFilter(e.target.value)}>
-            <option value="">All products</option>
-            {productOptions.map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-          <select className="select" value={sort} onChange={(e)=>setSort(e.target.value)}>
-            <option value="date-desc">Newest first</option>
-            <option value="date-asc">Oldest first</option>
-            <option value="amount-desc">Amount: High → Low</option>
-            <option value="amount-asc">Amount: Low → High</option>
-            <option value="customer-az">Customer: A → Z</option>
-            <option value="customer-za">Customer: Z → A</option>
-          </select>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <label className="label">Order/Invoice</label>
+            <input
+              className="input"
+              placeholder="Order ID or Invoice Number"
+              value={idInvoiceQuery}
+              onChange={(e)=>setIdInvoiceQuery(e.target.value)}
+              style={{ width: 220 }}
+            />
+          </div>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <label className="label">Date</label>
+            <input
+              className="input"
+              type="date"
+              value={dateFilter}
+              onChange={(e)=>setDateFilter(e.target.value)}
+            />
+          </div>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <label className="label">Month</label>
+            <input
+              className="input"
+              type="month"
+              value={monthFilter}
+              onChange={(e)=>setMonthFilter(e.target.value)}
+            />
+          </div>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <label className="label">Product</label>
+            <select className="select" value={productFilter} onChange={(e)=>setProductFilter(e.target.value)}>
+              <option value="">All products</option>
+              {productOptions.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
       {loading ? (
@@ -278,62 +358,72 @@ const Orders = () => {
       ) : orders.length === 0 ? (
         <div className="card" style={{ padding: 12 }}>No orders found</div>
       ) : (
-        <div className="grid-cards">
-          {filteredSorted.map((o) => (
-            <div key={o.id} className="card">
-              <div className="card-body">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontWeight: 600 }}>#{o.id.slice(-8)}</div>
-                  <span className={`badge ${o.status === 'ordered' ? '' : 'muted'}`}>{o.status || 'unknown'}</span>
-                </div>
-                <div style={{ fontSize: 12, color: '#555', marginTop: 4 }}>{formatDate(o.createdAt)}</div>
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontWeight: 600 }}>Customer</div>
-                  <div style={{ fontSize: 13, color: '#333' }}>{o?.billing?.name || '-'}</div>
-                  <div style={{ fontSize: 12, color: '#666' }}>{o?.billing?.email || ''}</div>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ fontWeight: 600 }}>Items</div>
-                  <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-                    {(o.items || []).map((it, i) => (
-                      <li key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                        <span>{it.name} × {it.qty}</span>
-                        <span>₹ {it.price * it.qty}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <hr style={{ border: '0', borderTop: '1px solid #eee', margin: '8px 0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                  <span>Total</span>
-                  <span>₹ {o.amount || 0}</span>
-                </div>
-                {o.discount ? (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', color: '#16a34a' }}>
-                    <span>Discount</span>
-                    <span>- ₹ {o.discount}</span>
-                  </div>
-                ) : null}
-                {o.coupon?.code && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#555' }}>
-                    <span>Coupon</span>
-                    <span>
-                      <span style={{ fontWeight: 600 }}>{o.coupon.code}</span>
-                      {o.coupon.valid === false && <span style={{ marginLeft: 6, color:'#a61717' }}>(invalid)</span>}
-                    </span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                  <span>Payable</span>
-                  <span>₹ {o.payable || o.amount || 0}</span>
-                </div>
-                <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>Payment: {o.paymentId || '-'}</div>
-                <div style={{ marginTop: 10 }}>
-                  <button onClick={() => downloadInvoice(o)}>Invoice PDF</button>
-                </div>
-              </div>
-            </div>
-          ))}
+        <div className="card">
+          <div className="card-body" style={{ overflowX: 'auto' }}>
+            <table className="table" style={{ width:'100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Order</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Date</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Customer</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Items</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="right">Amount</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="right">Discount</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="right">Payable</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Status</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Payment</th>
+                  <th style={{ padding: '12px 14px', fontSize: 12, color: '#555', borderBottom: '1px solid var(--border)' }} align="left">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSorted.map((o) => {
+                  const groups = summarizeItems(o.items || []);
+                  return (
+                    <tr key={o.id}>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)', whiteSpace: 'nowrap' }}>#{o.id.slice(-8)}</td>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>{formatDate(o.createdAt)}</td>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontWeight: 600 }}>{o?.billing?.name || '-'}</div>
+                        <div style={{ fontSize: 12, color: '#666' }}>{o?.billing?.email || ''}</div>
+                      </td>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>
+                        {groups.length === 0 ? (
+                          <div style={{ color: '#666', fontSize: 12 }}>No items</div>
+                        ) : (
+                          <div style={{ display: 'grid', gap: 6 }}>
+                            {groups.map((g) => (
+                              <div key={g.name}>
+                                <div style={{ fontWeight: 600, fontSize: 13 }}>{g.name}</div>
+                                <div style={{ fontSize: 12, color: '#555' }}>
+                                  {Array.from(g.sizes.entries()).map(([sz, q], idx) => (
+                                    <span key={sz}>
+                                      {sz !== '(default)' ? `${sz}×${q}` : `Qty ${q}`}{idx < g.sizes.size - 1 ? ', ' : ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td align="right" style={{ padding: '14px', borderTop: '1px solid var(--border)', fontVariantNumeric: 'tabular-nums' }}>₹ {Number(o.amount || 0).toFixed(2)}</td>
+                      <td align="right" style={{ padding: '14px', borderTop: '1px solid var(--border)', color: '#16a34a', fontVariantNumeric: 'tabular-nums' }}>{o.discount ? `- ₹ ${Number(o.discount).toFixed(2)}` : '-'}</td>
+                      <td align="right" style={{ padding: '14px', borderTop: '1px solid var(--border)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>₹ {Number(o.payable || o.amount || 0).toFixed(2)}</td>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>
+                        <span className={`badge ${o.status === 'ordered' ? '' : 'muted'}`}>{o.status || 'unknown'}</span>
+                      </td>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>{o.paymentId || '-'}</div>
+                      </td>
+                      <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>
+                        <button onClick={() => downloadInvoice(o)}>Invoice PDF</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Link } from 'react-router-dom';
@@ -6,10 +6,6 @@ import { deleteProduct } from '../lib/products';
 
 const Products = () => {
   const [products, setProducts] = useState([]);
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState('');
-  const [visibility, setVisibility] = useState('all');
-  const [sort, setSort] = useState('name-asc');
 
   useEffect(() => {
     const q = query(collection(db, 'products'), orderBy('name'));
@@ -27,95 +23,16 @@ const Products = () => {
     await deleteProduct(p.id);
   };
 
-  const categories = useMemo(() => {
-    const set = new Set(products.map((p) => String(p.categoryName || '').trim()).filter(Boolean));
-    return Array.from(set).sort((a,b)=>a.localeCompare(b));
-  }, [products]);
-
-  const filteredSorted = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    let list = products.filter((p) => {
-      const okName = term ? String(p.name || '').toLowerCase().includes(term) : true;
-      const okCat = category ? String(p.categoryName || '') === category : true;
-      const okVis = visibility === 'all' ? true : visibility === 'visible' ? !!p.isVisible : !p.isVisible;
-      return okName && okCat && okVis;
-    });
-    const getPrice = (p) => Number(p?.price || 0) || 0;
-    const getQty = (p) => Number(p?.quantity || 0) || 0;
-    const getCreated = (p) => (p?.createdAt?.toMillis?.() || 0);
-    switch (sort) {
-      case 'name-desc':
-        list.sort((a,b)=>String(b.name||'').localeCompare(String(a.name||'')));
-        break;
-      case 'price-asc':
-        list.sort((a,b)=>getPrice(a)-getPrice(b));
-        break;
-      case 'price-desc':
-        list.sort((a,b)=>getPrice(b)-getPrice(a));
-        break;
-      case 'stock-asc':
-        list.sort((a,b)=>getQty(a)-getQty(b));
-        break;
-      case 'stock-desc':
-        list.sort((a,b)=>getQty(b)-getQty(a));
-        break;
-      case 'created-desc':
-        list.sort((a,b)=>getCreated(b)-getCreated(a));
-        break;
-      case 'created-asc':
-        list.sort((a,b)=>getCreated(a)-getCreated(b));
-        break;
-      case 'name-asc':
-      default:
-        list.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
-        break;
-    }
-    return list;
-  }, [products, search, category, visibility, sort]);
-
   return (
     <div>
       <div className="toolbar">
-        <div>
-          <h1>Products</h1>
-          <div style={{ fontSize: 12, color: '#555' }}>Showing {filteredSorted.length} of {products.length}</div>
-        </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            className="input"
-            placeholder="Search products…"
-            value={search}
-            onChange={(e)=>setSearch(e.target.value)}
-            style={{ width: 200 }}
-          />
-          <select className="select" value={category} onChange={(e)=>setCategory(e.target.value)}>
-            <option value="">All categories</option>
-            {categories.map((c)=> (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <select className="select" value={visibility} onChange={(e)=>setVisibility(e.target.value)}>
-            <option value="all">All</option>
-            <option value="visible">Visible</option>
-            <option value="hidden">Hidden</option>
-          </select>
-          <select className="select" value={sort} onChange={(e)=>setSort(e.target.value)}>
-            <option value="name-asc">Name: A → Z</option>
-            <option value="name-desc">Name: Z → A</option>
-            <option value="price-asc">Price: Low → High</option>
-            <option value="price-desc">Price: High → Low</option>
-            <option value="stock-desc">Stock: High → Low</option>
-            <option value="stock-asc">Stock: Low → High</option>
-            <option value="created-desc">Newest first</option>
-            <option value="created-asc">Oldest first</option>
-          </select>
-          <Link to="/add-product">
-            <button className="primary">Add Product</button>
-          </Link>
-        </div>
+        <h1>Products</h1>
+        <Link to="/add-product">
+          <button className="primary">Add Product</button>
+        </Link>
       </div>
       <div className="grid-cards">
-        {filteredSorted.map(product => (
+        {products.map(product => (
           <div key={product.id} className="card">
             {(() => {
               const fallbackArr = Array.isArray(product.images) ? product.images : [];

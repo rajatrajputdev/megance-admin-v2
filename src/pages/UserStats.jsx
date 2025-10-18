@@ -48,9 +48,10 @@ export default function UserStats() {
 
   const totals = useMemo(() => {
     const sumWithGst = paidOrders.reduce((sum, o) => sum + (Number(o?.payable ?? o?.amount ?? 0) || 0), 0);
-    const divisor = 1 + (GST_PCT / 100);
-    const sumWithoutGst = divisor > 0 ? (sumWithGst / divisor) : sumWithGst;
-    return { sumWithGst, sumWithoutGst };
+    // Per requirement: treat GST as flat 18% of the total (gross)
+    const sumGst = sumWithGst * (GST_PCT / 100);
+    const sumWithoutGst = sumWithGst * (1 - (GST_PCT / 100)); // 82% of total
+    return { sumWithGst, sumWithoutGst, sumGst };
   }, [paidOrders]);
 
   const perUser = useMemo(() => {
@@ -107,14 +108,20 @@ export default function UserStats() {
       <div className="grid-cards" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
         <div className="card">
           <div className="card-body">
-            <div style={{ fontSize: 12, color: '#555' }}>Total Collected (with GST)</div>
+            <div style={{ fontSize: 12, color: '#555' }}>Total Orders (incl. GST)</div>
             <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums', letterSpacing: 0.3, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" }}>{currency(totals.sumWithGst)}</div>
           </div>
         </div>
         <div className="card">
           <div className="card-body">
-            <div style={{ fontSize: 12, color: '#555' }}>Total Collected (without GST)</div>
+            <div style={{ fontSize: 12, color: '#555' }}>Total Orders without GST</div>
             <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums', letterSpacing: 0.3, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" }}>{currency(totals.sumWithoutGst)}</div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-body">
+            <div style={{ fontSize: 12, color: '#555' }}>GST Collected</div>
+            <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8, fontVariantNumeric: 'tabular-nums', letterSpacing: 0.3, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" }}>{currency(totals.sumGst)}</div>
           </div>
         </div>
       </div>

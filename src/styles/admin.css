@@ -9,6 +9,25 @@
 .sidebar h2 { font-size: 18px; color: #fff; margin-bottom: 12px; }
 .sidebar a { display: block; padding: 8px 10px; border-radius: 6px; color: #e5e7eb; }
 .sidebar a:hover { background: rgba(255,255,255,0.06); }
+.sidebar-group { margin-top: 4px; }
+.sidebar-group-header {
+  width: 100%;
+  background: transparent;
+  color: #e5e7eb;
+  border: 0;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sidebar-group-header:hover { background: rgba(255,255,255,0.06); }
+.sidebar-sub { margin: 6px 0 6px 18px; display: grid; gap: 4px; }
+.sidebar-sub a { background: transparent; }
+.sidebar-sub a:hover { background: rgba(255,255,255,0.06); }
+.sidebar .chev { font-size: 12px; width: 1em; display: inline-block; }
 .main { flex: 1; padding: 24px; }
 
 /* Cards & grid */
