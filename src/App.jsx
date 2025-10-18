@@ -11,6 +11,7 @@ import Stock from './pages/Stock';
 import Orders from './pages/Orders';
 import Coupons from './pages/Coupons';
 import Newsletter from './pages/Newsletter';
+import UserStats from './pages/UserStats';
 
 function App() {
   return (
@@ -27,6 +28,7 @@ function App() {
             <Route path="/orders" element={<Orders />} />
             <Route path="/coupons" element={<Coupons />} />
             <Route path="/newsletter" element={<Newsletter />} />
+            <Route path="/user-stats" element={<UserStats />} />
           </Routes>
         </Layout>
       </AuthGate>

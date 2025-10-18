@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db, app } from '../firebase/config';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -21,6 +21,9 @@ function formatDate(ts) {
 const Orders = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [productFilter, setProductFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('date-desc');
 
   useEffect(() => {
     setLoading(true);
@@ -180,10 +183,95 @@ const Orders = () => {
     });
   }
 
+  // Unique product names from order items (for filtering)
+  const productOptions = useMemo(() => {
+    const set = new Set();
+    for (const o of orders) {
+      for (const it of (o.items || [])) {
+        const n = String(it?.name || '').trim();
+        if (n) set.add(n);
+      }
+    }
+    return Array.from(set).sort((a,b)=>a.localeCompare(b));
+  }, [orders]);
+
+  // Filtered + Sorted orders
+  const filteredSorted = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    let list = orders.filter((o) => {
+      const names = (o.items || []).map((it) => String(it?.name || ''));
+      const hasProduct = productFilter ? names.some((n) => n === productFilter) : true;
+      const matchesTerm = term ? names.some((n) => n.toLowerCase().includes(term)) : true;
+      return hasProduct && matchesTerm;
+    });
+    const getAmount = (o) => Number(o?.payable ?? o?.amount ?? 0) || 0;
+    switch (sort) {
+      case 'date-asc':
+        list.sort((a,b)=>((a.createdAt?.toMillis?.()||0)-(b.createdAt?.toMillis?.()||0)));
+        break;
+      case 'amount-desc':
+        list.sort((a,b)=>getAmount(b)-getAmount(a));
+        break;
+      case 'amount-asc':
+        list.sort((a,b)=>getAmount(a)-getAmount(b));
+        break;
+      case 'customer-az':
+        list.sort((a,b)=>String(a?.billing?.name||'').localeCompare(String(b?.billing?.name||'')));
+        break;
+      case 'customer-za':
+        list.sort((a,b)=>String(b?.billing?.name||'').localeCompare(String(a?.billing?.name||'')));
+        break;
+      case 'date-desc':
+      default:
+        list.sort((a,b)=>((b.createdAt?.toMillis?.()||0)-(a.createdAt?.toMillis?.()||0)));
+        break;
+    }
+    return list;
+  }, [orders, productFilter, search, sort]);
+
+  // Total collected across filtered orders: sum payable when paymentId exists (best proxy for paid)
+  const totalCollected = useMemo(() => {
+    return filteredSorted.reduce((sum, o) => {
+      const isCollected = Boolean(o?.paymentId);
+      const val = Number(o?.payable ?? o?.amount ?? 0) || 0;
+      return sum + (isCollected ? val : 0);
+    }, 0);
+  }, [filteredSorted]);
+
   return (
     <div>
       <div className="toolbar">
-        <h1>Orders</h1>
+        <div>
+          <h1>Orders</h1>
+          {!loading && (
+            <div style={{ fontSize: 12, color: '#555' }}>
+              Showing {filteredSorted.length} of {orders.length} · Total collected: ₹ {totalCollected.toFixed(2)}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            className="input"
+            placeholder="Search product in orders…"
+            value={search}
+            onChange={(e)=>setSearch(e.target.value)}
+            style={{ width: 220 }}
+          />
+          <select className="select" value={productFilter} onChange={(e)=>setProductFilter(e.target.value)}>
+            <option value="">All products</option>
+            {productOptions.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+          <select className="select" value={sort} onChange={(e)=>setSort(e.target.value)}>
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="amount-desc">Amount: High → Low</option>
+            <option value="amount-asc">Amount: Low → High</option>
+            <option value="customer-az">Customer: A → Z</option>
+            <option value="customer-za">Customer: Z → A</option>
+          </select>
+        </div>
       </div>
       {loading ? (
         <div className="card" style={{ padding: 12 }}>Loading…</div>
@@ -191,7 +279,7 @@ const Orders = () => {
         <div className="card" style={{ padding: 12 }}>No orders found</div>
       ) : (
         <div className="grid-cards">
-          {orders.map((o) => (
+          {filteredSorted.map((o) => (
             <div key={o.id} className="card">
               <div className="card-body">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
