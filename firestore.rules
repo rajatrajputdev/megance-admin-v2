@@ -29,6 +29,20 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Refunds & returns management (admin only)
+    match /refundRequests/{docId} {
+      allow read, write: if isAdmin();
+    }
+    match /refundRequestsIndex/{docId} {
+      allow read, write: if isAdmin();
+    }
+    match /users/{uid}/refundRequests/{docId} {
+      allow read, write: if isAdmin();
+    }
+    match /users/{uid}/orders/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     // Default deny for everything else
     match /{document=**} {
       allow read, write: if false;

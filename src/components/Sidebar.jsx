@@ -40,6 +40,7 @@ const Sidebar = () => {
           {open.sales && (
             <ul className="sidebar-sub">
               <li><Link to="/orders">Orders</Link></li>
+              <li><Link to="/refunds">Refunds</Link></li>
               <li><Link to="/coupons">Coupons</Link></li>
             </ul>
           )}

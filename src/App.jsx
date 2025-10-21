@@ -12,6 +12,7 @@ import Orders from './pages/Orders';
 import Coupons from './pages/Coupons';
 import Newsletter from './pages/Newsletter';
 import UserStats from './pages/UserStats';
+import Refunds from './pages/Refunds';
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
             <Route path="/categories" element={<Categories />} />
             <Route path="/stock" element={<Stock />} />
             <Route path="/orders" element={<Orders />} />
+            <Route path="/refunds" element={<Refunds />} />
             <Route path="/coupons" element={<Coupons />} />
             <Route path="/newsletter" element={<Newsletter />} />
             <Route path="/user-stats" element={<UserStats />} />
