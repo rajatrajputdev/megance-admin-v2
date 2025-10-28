@@ -5,7 +5,10 @@ service cloud.firestore {
     // Restrict admin access to the configured admin email.
     // Tip: For production, using a custom claim (request.auth.token.admin) is recommended.
     function isAdmin() {
-      return request.auth != null && request.auth.token.email == 'megancetech@gmail.com';
+      return request.auth != null && (
+        request.auth.token.email == 'megancetech@gmail.com' ||
+        request.auth.token.email == 'support@megance.com'
+      );
     }
 
     // Admin-only collections used by this backend app

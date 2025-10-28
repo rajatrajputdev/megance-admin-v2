@@ -1,7 +1,12 @@
 import React from 'react';
 import { auth, listenAuth, signInWithGoogle, logout } from '../firebase/auth';
 
-const ADMIN_EMAIL = 'megancetech@gmail.com';
+// Support multiple admin emails via env for compatibility with backend checks
+// e.g. VITE_ADMIN_EMAILS="megancetech@gmail.com,support@megance.com"
+const ADMIN_EMAILS = String(import.meta.env.VITE_ADMIN_EMAILS || 'megancetech@gmail.com')
+  .split(',')
+  .map((s) => s.trim().toLowerCase())
+  .filter(Boolean);
 
 export default function AuthGate({ children }) {
   const [user, setUser] = React.useState(null);
@@ -20,14 +25,22 @@ export default function AuthGate({ children }) {
 
   if (loading) return <div className="toolbar"><h1>Loading…</h1></div>;
 
-  if (!user || user.email !== ADMIN_EMAIL) {
+  const authorized = !!(user && ADMIN_EMAILS.includes(String(user.email || '').toLowerCase()));
+  if (!authorized) {
     return (
       <div style={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}>
         <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 20, background: '#fff' }}>
           <h2 style={{ marginTop: 0 }}>Admin Login</h2>
-          <p style={{ marginTop: 6, color: '#555' }}>Sign in with the admin Google account to continue.</p>
-          {user && user.email !== ADMIN_EMAIL && (
-            <p style={{ color: '#a61717', fontSize: 13 }}>Signed in as {user.email}. This account is not authorized.</p>
+          <p style={{ marginTop: 6, color: '#555' }}>Sign in with an authorized admin account to continue.</p>
+          {user && !authorized && (
+            <p style={{ color: '#a61717', fontSize: 13 }}>
+              Signed in as {user.email}. This account is not authorized.
+              {!!ADMIN_EMAILS.length && (
+                <>
+                  {' '}Allowed: {ADMIN_EMAILS.join(', ')}
+                </>
+              )}
+            </p>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             {!user ? (
@@ -44,4 +57,3 @@ export default function AuthGate({ children }) {
 
   return children;
 }
-

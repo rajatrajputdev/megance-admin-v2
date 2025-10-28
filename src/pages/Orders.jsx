@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db, app } from '../firebase/config';
+import { auth } from '../firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 function tsToDate(ts) {
@@ -25,6 +26,7 @@ const Orders = () => {
   const [idInvoiceQuery, setIdInvoiceQuery] = useState('');
   const [dateFilter, setDateFilter] = useState(''); // YYYY-MM-DD
   const [monthFilter, setMonthFilter] = useState(''); // YYYY-MM
+  const [openingId, setOpeningId] = useState(null);
 
   useEffect(() => {
     setLoading(true);
@@ -40,50 +42,80 @@ const Orders = () => {
 
   const downloadInvoice = async (order) => {
     const orderId = order?.id;
+    if (!orderId) return;
+    setOpeningId(orderId);
     try {
-      // Prefer region from env if provided; otherwise, try a few common regions
-      const envRegion = (import.meta.env.VITE_FUNCTIONS_REGION || '').trim();
-      const regions = envRegion ? [envRegion] : [undefined, 'asia-south2', 'us-central1', 'asia-south1', 'europe-west1'];
-      let response = null;
-      let lastErr = null;
-      for (const r of regions) {
-        try {
-          const fns = getFunctions(app, r);
-          const call = httpsCallable(fns, 'getOrderInvoicePdfCallable');
-          const res = await call({ orderId });
-          if (res?.data?.data) { response = res.data; break; }
-        } catch (e) { lastErr = e; }
-      }
-      if (!response) throw lastErr || new Error('Invoice function unavailable');
+      const user = auth.currentUser;
+      if (!user) throw new Error('Not signed in');
+      const token = await user.getIdToken();
+      const projectId = (app?.options?.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || '').trim();
+      if (!projectId) throw new Error('Missing projectId');
+      const region = (import.meta.env.VITE_FUNCTIONS_REGION || 'asia-south2').trim();
 
-      const { contentType, data, filename } = response || {};
-      if (!data) throw new Error('No data received from function');
+      // Preflight request using Authorization header to detect 401/403 before opening a new tab
+      const checkUrl = `https://${region}-${projectId}.cloudfunctions.net/getOrderInvoiceHtml?orderId=${encodeURIComponent(orderId)}`;
+      const resp = await fetch(checkUrl, {
+        method: 'GET',
+        mode: 'cors',
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-      const blob = await (await fetch(`data:${contentType||'application/pdf'};base64,${data}`)).blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename || `invoice-${orderId}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 3000);
-    } catch (err) {
-      // Fallback: open a printable invoice in a new tab
-      try {
-        const html = buildInvoiceHtml(order);
-        const w = window.open('', '_blank');
-        if (!w) throw err; // popup blocked; rethrow original
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-        // Give browser a tick to render before print
-        setTimeout(() => { try { w.focus(); w.print(); } catch {} }, 300);
-      } catch (_) {
-        alert('Unable to generate invoice. Please set VITE_FUNCTIONS_REGION to your Cloud Functions region and ensure getOrderInvoicePdfCallable is deployed.');
+      if (resp.ok) {
+        // Open with token in query so the new tab has auth
+        const url = `${checkUrl}&token=${encodeURIComponent(token)}`;
+        const w = window.open(url, '_blank');
+        if (!w) throw new Error('Popup blocked');
+      } else {
+        let msg = '';
+        try { msg = (await resp.text()).slice(0, 300); } catch {}
+        if (resp.status === 403) {
+          alert('Forbidden: your account is not authorized to view this invoice. Use an allowed admin email or the order owner account.');
+        } else if (resp.status === 401) {
+          alert('Unauthorized: please sign in again and retry.');
+        } else {
+          alert(`Unable to open invoice (HTTP ${resp.status})${msg ? `\n${msg}` : ''}`);
+        }
       }
+    } catch (e) {
+      alert('Unable to open invoice. Check your login and function deployment.');
+    } finally {
+      setOpeningId(null);
     }
   };
+
+  async function fetchInvoiceHtml(orderId) {
+    const id = String(orderId || '').trim();
+    if (!id) throw new Error('orderId required');
+    const user = auth.currentUser;
+    if (!user) throw new Error('Not signed in');
+    const token = await user.getIdToken();
+    const projectId = (app?.options?.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || '').trim();
+    if (!projectId) throw new Error('Missing projectId');
+    const envRegion = (import.meta.env.VITE_FUNCTIONS_REGION || '').trim();
+    const regions = envRegion ? [envRegion] : ['asia-south2', 'us-central1', 'asia-south1', 'europe-west1'];
+    let lastErr = null;
+    for (const region of regions) {
+      try {
+        const url = `https://${region}-${projectId}.cloudfunctions.net/getOrderInvoiceHtml?orderId=${encodeURIComponent(id)}`;
+        const resp = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          method: 'GET',
+          mode: 'cors',
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const ct = resp.headers.get('content-type') || '';
+        if (!ct.includes('text/html')) {
+          // still accept, but prefer HTML
+        }
+        const html = await resp.text();
+        if (!html) throw new Error('Empty HTML');
+        return html;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('Invoice HTML function unavailable');
+  }
 
 
   function buildInvoiceHtml(order) {
@@ -416,7 +448,9 @@ const Orders = () => {
                         <div style={{ fontSize: 12, color: '#666' }}>{o.paymentId || '-'}</div>
                       </td>
                       <td style={{ padding: '14px', borderTop: '1px solid var(--border)' }}>
-                        <button onClick={() => downloadInvoice(o)}>Invoice PDF</button>
+                        <button onClick={() => downloadInvoice(o)} disabled={openingId === o.id} title="Open invoice in a new tab">
+                          {openingId === o.id ? 'Opening…' : 'View Invoice'}
+                        </button>
                       </td>
                     </tr>
                   );

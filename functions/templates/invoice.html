@@ -1,0 +1,144 @@
+<!doctype html>
+<!--
+  Invoice Template (Standalone, Editable)
+  - You can freely edit this HTML/CSS to change the look
+  - Keep the {{PLACEHOLDERS}} intact; the function replaces them
+  - For items, the function injects <tr> rows at {{ITEMS_ROWS}}
+  - Print-friendly: styled for A4, white background, no external deps
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}} · {{INVOICE_NO}}</title>
+    <style>
+      :root {
+        --brand: #111111;         /* primary brand/dark */
+        --brand-2: #222222;       /* darker */
+        --accent: #4f46e5;        /* accent for highlights */
+        --text: #111111;
+        --muted: #666666;
+        --soft: #f6f7f9;
+        --line: #eaecef;
+        --card: #ffffff;
+        --radius: 12px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 24px; color: var(--text);
+        font: 14px/1.55 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: #fff;
+      }
+      .wrap { max-width: 940px; margin: 0 auto; }
+      .brand {
+        background: linear-gradient(135deg, var(--brand), var(--brand-2));
+        color: #fff; border-radius: var(--radius);
+        padding: 18px 20px; display: flex; align-items: center; gap: 14px;
+      }
+      .brand img { height: 34px; object-fit: contain; }
+      .brand .title { font-weight: 700; font-size: 18px; letter-spacing: .2px; }
+      .grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; margin-top: 16px; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+      .card h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .3px; color: var(--muted); text-transform: uppercase; }
+      .muted { color: var(--muted); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .kv { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+      .kv .k { color: var(--muted); }
+      .kv .v { text-align: right; font-weight: 600; }
+      table { width: 100%; border-collapse: collapse; }
+      thead th { font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+      tbody td { padding: 12px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      tbody tr:hover td { background: #fafafa; }
+      .i-name { font-weight: 600; }
+      .i-desc { color: var(--muted); font-size: 12px; margin-top: 2px; max-width: 680px; }
+      .t-right { text-align: right; }
+      .totals { display: grid; grid-template-columns: 1fr 340px; gap: 16px; margin-top: 16px; }
+      .totals .box { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+      .total-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0; }
+      .total-row .k { color: var(--muted); }
+      .total-row .v { text-align: right; font-weight: 600; }
+      .grand { background: var(--brand); color: #fff; border-radius: 10px; padding: 10px 12px; display: grid; grid-template-columns: 1fr auto; }
+      .grand .k { opacity: .9; }
+      .grand .v { font-size: 16px; font-weight: 700; }
+      .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
+      @media print {
+        body { padding: 0; }
+        .wrap { max-width: none; margin: 0; padding: 0 18mm; }
+        .brand { border-radius: 0; }
+        .card { break-inside: avoid; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand" style="background:#111;color:#fff;border-radius:12px;padding:16px 18px;display:flex;align-items:center;gap:12px;">
+        <img src="{{MEGANCE_LOGO_URL}}" alt="Megance" style="height:34px;object-fit:contain;vertical-align:middle" />
+        <span style="font-weight:700;font-size:18px;letter-spacing:.2px;vertical-align:middle;padding-left: 50px;">{{TITLE}}</span>
+      </div>
+
+      <div class="grid">
+        <div class="card">
+          <h3>Invoice</h3>
+          <div class="kv">
+            <div class="k">Invoice No</div><div class="v mono">{{INVOICE_NO}}</div>
+            <div class="k">Date</div><div class="v">{{INVOICE_DATE}}</div>
+            <div class="k">Payment</div><div class="v">{{PAYMENT_METHOD}}</div>
+            <div class="k">Order</div><div class="v mono">#{{ORDER_ID}}</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Company</h3>
+          <div><strong>{{COMPANY_NAME}}</strong></div>
+          <div class="muted">GSTIN: {{COMPANY_GSTIN}}</div>
+          <div class="muted">FLAT NO - 188, S/F, JANTA FLAT, POCKET-B, PASCHIM PURI EXTN, New Delhi, West Delhi, Delhi, 110063</div>
+        </div>
+      </div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1fr; margin-top: 12px;">
+        <div class="card">
+          <h3>Bill To</h3>
+          <div><strong>{{BILLING_NAME}}</strong></div>
+          <div class="muted">{{BILLING_EMAIL}}</div>
+          <div class="muted">{{BILLING_PHONE}}</div>
+          <div class="muted" style="margin-top: 6px;">{{BILLING_ADDRESS}}</div>
+        </div>
+        <div class="card">
+          <h3>Notes</h3>
+          <div class="muted">Thanks for shopping with us. For support, contact support@megance.com</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="t-right">Qty</th>
+              <th class="t-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{ITEMS_ROWS}}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="totals">
+        <div></div>
+        <div class="box">
+          <div class="total-row"><div class="k">Base Price (incl. GST)</div><div class="v">{{MRP_INCL_GST}}</div></div>
+          <div class="total-row"><div class="k">Discount</div><div class="v">{{DISCOUNT}}</div></div>
+          <div class="total-row"><div class="k">Price after discount (incl. GST)</div><div class="v">{{INCL_AFTER_DISCOUNT}}</div></div>
+          <div class="total-row"><div class="k">GST ({{GST_PERCENT}}% included)</div><div class="v">{{GST_VALUE}}</div></div>
+          <div class="grand" style="margin-top: 10px;">
+            <div class="k">Total Payable</div>
+            <div class="v">{{TOTAL_PAYABLE}}</div>
+          </div>
+          <div class="note">This is a system-generated invoice.</div>
+          <div class="note">By ordering with us, you accept all the terms and conditions of megance.com</div>
+        </div>
+      </div>
+
+    </div>
+  </body>
+  </html>

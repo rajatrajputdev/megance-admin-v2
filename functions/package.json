@@ -6,9 +6,12 @@
   },
   "main": "index.js",
   "type": "commonjs",
+  "files": [
+    "index.js",
+    "templates/"
+  ],
   "dependencies": {
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^4.7.0"
   }
 }
-

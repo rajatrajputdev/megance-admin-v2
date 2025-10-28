@@ -1,13 +1,25 @@
 'use strict';
 
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, HttpsError, onRequest } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+const fs = require('fs');
+const path = require('path');
 
 try { admin.initializeApp(); } catch (_) {}
 
 const REGION = process.env.FUNCTIONS_REGION || 'asia-south2';
 const OWNER_EMAIL = process.env.OWNER_EMAIL || 'megancetech@gmail.com';
+// Allow multiple admin emails for privileged views (like invoice rendering)
+const ADMIN_EMAILS = new Set(
+  String(process.env.ADMIN_EMAILS || 'megancetech@gmail.com,support@megance.com')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+);
+function isAdminEmail(email) {
+  try { return ADMIN_EMAILS.has(String(email || '').toLowerCase()); } catch { return false; }
+}
 
 // Secrets for XpressBees + Twilio (returns notifications)
 const XPRESSBEES_USERNAME = defineSecret('XPRESSBEES_USERNAME');
@@ -23,7 +35,110 @@ const TWILIO_RETURNS_USER_REJECTED_SID = defineSecret('TWILIO_RETURNS_USER_REJEC
 function isAdminAuth(ctx) {
   const email = ctx?.auth?.token?.email || '';
   const claimAdmin = ctx?.auth?.token?.admin === true;
-  return claimAdmin || (email && email.toLowerCase() === OWNER_EMAIL.toLowerCase());
+  return claimAdmin || isAdminEmail(email) || (email && email.toLowerCase() === OWNER_EMAIL.toLowerCase());
+}
+
+// ----- Invoice template helpers (HTML design) -----
+const MEGANCE_GSTIN = process.env.MEGANCE_GSTIN || '07AATCM4525E1ZB';
+const MEGANCE_LOGO_URL = (process.env.MEGANCE_LOGO_URL && String(process.env.MEGANCE_LOGO_URL).trim()) ||
+  'https://megance.com/assets/imgs/megancew.png';
+const MEGANCE_WAREHOUSE_ADDRESS = (process.env.MEGANCE_WAREHOUSE_ADDRESS ||
+  'A-51, First floor, Meera Bagh, Paschim Vihar, New Delhi 110087').trim();
+
+const TEMPLATE_DIR = path.join(__dirname, 'templates');
+let INVOICE_TEMPLATE_CACHE = null;
+function loadInvoiceTemplate() {
+  if (INVOICE_TEMPLATE_CACHE) return INVOICE_TEMPLATE_CACHE;
+  try {
+    const p = path.join(TEMPLATE_DIR, 'invoice.html');
+    INVOICE_TEMPLATE_CACHE = fs.readFileSync(p, 'utf8');
+    return INVOICE_TEMPLATE_CACHE;
+  } catch (e) {
+    // tiny fallback so endpoint still responds
+    INVOICE_TEMPLATE_CACHE = '<!doctype html><html><head><meta charset="utf-8"><title>Invoice</title></head><body><h1>Invoice {{INVOICE_NO}}</h1><div>Order: {{ORDER_ID}}</div><div>Buyer: {{BILLING_NAME}}</div><table border=1 cellspacing=0 cellpadding=6 width="100%"><thead><tr><th align="left">Item</th><th align="right">Qty</th><th align="right">Amount</th></tr></thead><tbody>{{ITEMS_ROWS}}</tbody></table><h3>Total: {{TOTAL_PAYABLE}}</h3></body></html>';
+    return INVOICE_TEMPLATE_CACHE;
+  }
+}
+
+function escapeHtml(val) {
+  const s = String(val ?? '');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function currencyINR(n) {
+  try {
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(n) || 0);
+  } catch {
+    return `₹ ${Number(n) || 0}`;
+  }
+}
+
+function compileInvoiceHtml({ orderId, data }) {
+  const tpl = loadInvoiceTemplate();
+  const created = data.createdAt && data.createdAt.toDate ? data.createdAt.toDate() : new Date();
+  const billing = data.billing || {};
+  const items = Array.isArray(data.items) ? data.items : [];
+
+  // Totals (GST-inclusive)
+  const mrp = Math.round(Number(data.amount) || items.reduce((a, it) => a + (Number(it.price) || 0) * (Number(it.qty) || 0), 0));
+  const discount = Math.max(0, Math.round(Number(data.discount || 0)));
+  const afterDiscount = Math.max(0, mrp - discount);
+  const baseExclusive = Math.round(afterDiscount / 1.18);
+  const tax = Math.max(0, afterDiscount - baseExclusive);
+  const payable = afterDiscount;
+
+  const invDate = created;
+  const invoiceNo = `MG-${invDate.getFullYear().toString().slice(-2)}${String(invDate.getMonth() + 1).padStart(2, '0')}${String(invDate.getDate()).padStart(2, '0')}-${orderId.slice(0, 4).toUpperCase()}`;
+
+  const rowsHtml = items.map((it) => {
+    const qty = Number(it.qty) || 0;
+    const amt = (Number(it.price) || 0) * qty;
+    const size = it?.meta?.size ? ` (Size ${escapeHtml(it.meta.size)})` : '';
+    return (
+      `<tr>
+        <td>
+          <div class="i-name">${escapeHtml(it.name || '')}${size}</div>
+          ${it.description ? `<div class="i-desc">${escapeHtml(String(it.description).slice(0, 140))}</div>` : ''}
+        </td>
+        <td class="t-right">${qty}</td>
+        <td class="t-right">${currencyINR(amt)}</td>
+      </tr>`
+    );
+  }).join('');
+
+  const rep = {
+    '{{TITLE}}': 'Tax Invoice',
+    '{{MEGANCE_LOGO_URL}}': escapeHtml(MEGANCE_LOGO_URL),
+    '{{COMPANY_NAME}}': 'MEGANCE LIFESTYLE (OPC) PRIVATE LIMITED',
+    '{{COMPANY_GSTIN}}': escapeHtml(MEGANCE_GSTIN),
+    '{{COMPANY_ADDRESS}}': escapeHtml(MEGANCE_WAREHOUSE_ADDRESS),
+    '{{ORDER_ID}}': escapeHtml(orderId.toUpperCase()),
+    '{{INVOICE_NO}}': escapeHtml(invoiceNo),
+    '{{INVOICE_DATE}}': escapeHtml(invDate.toLocaleDateString('en-IN')),
+    '{{PAYMENT_METHOD}}': escapeHtml(String(data.paymentMethod || (data.paymentId ? 'online' : 'cod')).toUpperCase()),
+    '{{BILLING_NAME}}': escapeHtml(billing.name || ''),
+    '{{BILLING_EMAIL}}': escapeHtml(billing.email || ''),
+    '{{BILLING_PHONE}}': escapeHtml(billing.phone || ''),
+    '{{BILLING_ADDRESS}}': escapeHtml([billing.address, billing.city, billing.state, billing.zip].filter(Boolean).join(', ')),
+    '{{ITEMS_ROWS}}': rowsHtml || '<tr><td colspan="3" class="muted">No items</td></tr>',
+    '{{SUBTOTAL}}': currencyINR(baseExclusive),
+    '{{MRP_INCL_GST}}': currencyINR(mrp),
+    '{{DISCOUNT}}': discount ? '- ' + currencyINR(discount) : currencyINR(0),
+    '{{INCL_AFTER_DISCOUNT}}': currencyINR(afterDiscount),
+    '{{GST_VALUE}}': currencyINR(tax),
+    '{{GST_PERCENT}}': String(data.gstPercent ?? 18),
+    '{{SHIPPING}}': 'Free',
+    '{{TOTAL_PAYABLE}}': currencyINR(payable),
+  };
+
+  let html = tpl;
+  for (const [k, v] of Object.entries(rep)) html = html.split(k).join(v);
+  return html;
 }
 
 function phoneToWhatsApp(raw) {
@@ -349,4 +464,54 @@ exports.adminCreateReturn = onCall({ region: REGION, secrets: [XPRESSBEES_USERNA
   } catch (_) {}
 
   return { ok: true, awb, shipmentId };
+});
+
+// ----- Invoice (HTML) -----
+// Minimal HTML invoice endpoint to support admin panel viewing/printing.
+// Auth: requires Firebase ID token via Authorization: Bearer or token query param.
+exports.getOrderInvoiceHtml = onRequest({ region: REGION, cors: true }, async (req, res) => {
+  try {
+    const orderId = String(req.query.orderId || req.query.id || '').trim();
+    const token = String(
+      req.query.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '')
+    ).trim();
+    if (!orderId || !token) { res.status(401).send('Unauthorized'); return; }
+
+    let decoded;
+    try { decoded = await admin.auth().verifyIdToken(token); } catch { res.status(401).send('Unauthorized'); return; }
+
+    const db = admin.firestore();
+    const snap = await db.doc(`orders/${orderId}`).get();
+    if (!snap.exists) { res.status(404).send('Not found'); return; }
+    const data = snap.data() || {};
+
+    const uid = decoded.uid || '';
+    const email = decoded.email || '';
+    const ownerUid = String(data.userId || data.user?.id || '').trim();
+    const isOwner = ownerUid && ownerUid === uid;
+    if (!(isOwner || isAdminEmail(email) || (email && email.toLowerCase() === OWNER_EMAIL.toLowerCase()))) {
+      res.status(403).send('Forbidden');
+      return;
+    }
+
+    let html;
+    try {
+      html = compileInvoiceHtml({ orderId, data });
+    } catch (e) {
+      // Robust fallback to a minimal HTML to avoid HTTP 500
+      const created = (data.createdAt && data.createdAt.toDate) ? data.createdAt.toDate() : new Date();
+      const items = Array.isArray(data.items) ? data.items : [];
+      const currency = (v) => `₹ ${Number(v || 0).toFixed(2)}`;
+      const rows = items.map((it) => (`<tr><td>${escapeHtml(it?.name || '')}</td><td class="t-center">${Number(it?.qty||0)}</td><td class="t-right">${currency(it?.price||0)}</td><td class="t-right">${currency((Number(it?.price)||0)*(Number(it?.qty)||0))}</td></tr>`)).join('');
+      const amount = items.reduce((a, it) => a + (Number(it.price)||0)*(Number(it.qty)||0), 0);
+      const discount = Math.max(0, Number(data.discount || 0));
+      const payable = Math.max(0, Number(data.payable || amount - discount));
+      html = `<!doctype html><html><head><meta charset="utf-8"/><title>Invoice #${orderId.slice(-8).toUpperCase()}</title><style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:#111;margin:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e5e7eb;padding:8px;font-size:14px}th{background:#f8fafc;text-align:left}.t-right{text-align:right}.t-center{text-align:center}@media print{button{display:none}body{margin:0}}</style></head><body><h1 style="margin:0 0 6px">MEGANCE — Invoice</h1><div style="color:#555;font-size:12px">Order #${orderId.slice(-8).toUpperCase()} · ${escapeHtml(created.toLocaleString())}</div><table><thead><tr><th>Item</th><th class="t-center">Qty</th><th class="t-right">Price</th><th class="t-right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="t-center" style="opacity:.7">No items</td></tr>'}</tbody></table><table style="margin-top:12px"><tbody><tr><td style="width:70%"></td><td style="width:15%;text-align:right">Subtotal</td><td style="width:15%;text-align:right">${currency(amount)}</td></tr>${discount ? `<tr><td></td><td style=\"text-align:right\">Discount</td><td style=\"text-align:right\">- ${currency(discount)}</td></tr>` : ''}<tr><td></td><td style="text-align:right;font-weight:700">Total</td><td style="text-align:right;font-weight:700">${currency(payable)}</td></tr></tbody></table><button onclick="window.print()" style="margin-top:16px">Print / Save as PDF</button></body></html>`;
+    }
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.status(200).send(html);
+  } catch (e) {
+    try { console.error('[getOrderInvoiceHtml] error', e?.message || e); } catch {}
+    res.status(500).send('Internal error');
+  }
 });
